@@ -1,0 +1,3 @@
+loki/data/
+loki/wal/
+.env

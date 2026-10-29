@@ -1,0 +1,86 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// --- Docker logs ---
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container_name"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.docker_logs.rules
+  forward_to    = [loki.process.docker_labels.receiver]
+}
+
+loki.process "docker_labels" {
+  stage.static_labels {
+    values = {
+      application = "docker",
+      source      = "docker",
+    }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+// --- auth.log ---
+local.file_match "auth_logs" {
+  path_targets = [{ __path__ = "/var/log/auth.log" }]
+}
+
+loki.source.file "auth_logs" {
+  targets    = local.file_match.auth_logs.targets
+  forward_to = [loki.process.auth_labels.receiver]
+}
+
+loki.process "auth_labels" {
+  stage.static_labels {
+    values = {
+      source = "auth",
+      job    = "authlog",
+    }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+// --- Прочие системные логи ---
+local.file_match "system_logs" {
+  path_targets = [
+    { __path__ = "/var/log/syslog" },
+    { __path__ = "/var/log/kern.log" },
+    { __path__ = "/var/log/dpkg.log" },
+  ]
+}
+
+loki.source.file "system_logs" {
+  targets    = local.file_match.system_logs.targets
+  forward_to = [loki.process.system_labels.receiver]
+}
+
+loki.process "system_labels" {
+  stage.static_labels {
+    values = {
+      application = "system",
+      job         = "varlogs",
+    }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

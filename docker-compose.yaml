@@ -1,0 +1,69 @@
+services:
+  loki-init:
+    image: busybox:latest
+    user: root
+    volumes:
+      - ./loki/data:/loki
+      - ./loki/wal:/wal
+    command: >
+      sh -c "mkdir -p /loki/chunks /loki/cache /loki/index /loki/compactor /wal &&
+             chown -R 10001:10001 /loki /wal"
+    network_mode: none
+    restart: "no"
+
+  loki:
+    image: grafana/loki:3.7.1
+    user: "10001:10001"
+    depends_on:
+      loki-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml
+      - ./loki/data:/loki
+      - ./loki/wal:/wal
+    command: -config.file=/etc/loki/config.yaml
+    networks:
+      - siem-net
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:latest
+    depends_on:
+      - loki
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: run /etc/alloy/config.alloy --server.http.listen-addr=0.0.0.0:12345
+    networks:
+      - siem-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.2.8
+    depends_on:
+      - loki
+    env_file:
+      - .env
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - siem-net
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: siem-nginx
+    depends_on:
+      - grafana
+    ports:
+      - "127.0.0.1:80:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    networks:
+      - siem-net
+    restart: unless-stopped
+
+networks:
+  siem-net:
+    driver: bridge
